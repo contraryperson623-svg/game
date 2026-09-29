@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Gender Reveal Game</title>
+    <style>
+        * { box-sizing: border-box; user-select: none; }
+        body { margin: 0; background: #eef2f7; font-family: sans-serif; overflow: hidden; display: flex; align-items: center; justify-content: center; width: 100vw; height: 100vh; }
+        #game-container { position: relative; width: 600px; height: 750px; background: #ffffff; border: 3px solid #333; border-radius: 10px; overflow: hidden; }
+        #header { padding: 15px; background: #333; color: white; font-weight: bold; font-size: 18px; text-align: center; }
+        .box { position: absolute; bottom: 50px; width: 140px; height: 140px; border-radius: 15px; display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: bold; color: white; z-index: 5; }
+        #boy-box { left: 40px; background: #4a90e2; border: 4px solid #2a70c2; }
+        #girl-box { right: 40px; background: #f5a623; border: 4px solid #d58603; }
+        .word { position: absolute; padding: 12px 24px; background: white; border-radius: 25px; font-size: 24px; font-weight: bold; cursor: grab; border: 2px solid #444; z-index: 10; display: inline-block; }
+        .dummy { border-color: #bbb; color: #999; opacity: 0.8; }
+        #explode-box { position: absolute; left: 200px; top: 250px; width: 200px; height: 200px; background: #9b59b6; border: 6px dashed #fff; border-radius: 20px; color: white; font-size: 60px; font-weight: bold; display: none; align-items: center; justify-content: center; z-index: 50; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
+        #explode-box.pow { animation: pow-anime 0.2s ease-out forwards; background: #e74c3c; border: none; }
+        @keyframes pow-anime { 0% { transform: scale(1); opacity: 1; } 100% { transform: scale(2.2); opacity: 0; } }
+        #screen-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.95); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; padding: 40px; text-align: center; }
+        button { padding: 15px 40px; font-size: 22px; font-weight: bold; background: #28a745; color: white; border: none; border-radius: 30px; cursor: pointer; margin-top: 30px; }
+        .guess-btn { width: 180px; margin: 15px; font-size: 26px; cursor: pointer; }
+        #result-screen { display: none; }
+    </style>
+</head>
+<body>
+<div id="game-container">
+    <div id="header">ジェンダーリビールゲーム</div>
+    <div id="boy-box" class="box">BOY</div>
+    <div id="girl-box" class="box">GIRL</div>
+    <div id="explode-box">BOX</div>
+    <div id="screen-overlay">
+        <div id="info-content">
+            <h2 id="title-text" style="font-size: 28px; margin-bottom: 15px;">ジェンダーリビールゲーム</h2>
+            <p id="desc-text" style="font-size: 18px; color: #555;">出てくる文字をマウスで正しい箱にドラッグしてね！</p>
+            <button id="start-btn" onclick="nextStage()">ゲームスタート</button>
+        </div>
+        <div id="result-screen">
+            <h1 style="font-size: 36px; margin-bottom: 10px;">正解は...</h1>
+            <div id="reveal-answer" style="font-size: 64px; font-weight: bold; margin: 30px 0;"></div>
+            <p style="font-size: 22px; font-weight: bold; color: #333;">1月10日が予定日です！🎉</p>
+        </div>
+    </div>
+</div>
+<script>
+
+
+    const ACTUAL_GENDER = "GIRL"; // ★女の子正解にするならここを "GIRL" に
+    let currentStage = 0, activeWords = [], dragElement = null, offsetX = 0, offsetY = 0, animationFrameId = null;
+    const container = document.getElementById('game-container'), header = document.getElementById('header'), overlay = document.getElementById('screen-overlay'), infoContent = document.getElementById('info-content'), titleText = document.getElementById('title-text'), descText = document.getElementById('desc-text'), startBtn = document.getElementById('start-btn'), boyBox = document.getElementById('boy-box'), girlBox = document.getElementById('girl-box'), expBox = document.getElementById('explode-box');
+
+    function nextStage() {
+        currentStage++; overlay.style.display = 'none'; clearStage(); expBox.style.display = 'none'; expBox.className = ''; expBox.innerText = 'BOX';
+        if (currentStage === 1) { header.innerText = "ステージ 1: 基本の仕分け"; generateStage1(); gameLoop(); }
+        else if (currentStage === 2) { header.innerText = "ステージ 2: 動く文字をキャッチ"; generateStage2(); gameLoop(); }
+        else if (currentStage === 3) { header.innerText = "ステージ 3: クラッカー爆発！"; autoExplodeStage3(); }
+        else if (currentStage === 4) { header.innerText = "最終ステージ: あなたの予想は？"; showGuessScreen(); }
+    }
+    function clearStage() { if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; } activeWords.forEach(w => { if(w.el) w.el.remove(); }); activeWords = []; }
+    function showIntro(title, desc, buttonText) { overlay.style.display = 'flex'; infoContent.style.display = 'block'; titleText.innerText = title; descText.innerText = desc; startBtn.innerText = buttonText; }
+    function createWord(text, isDummy = false) {
+        const el = document.createElement('div'); el.className = `word ${isDummy ? 'dummy' : ''}`; el.innerText = text; container.appendChild(el);
+        const x = 250, y = 330; el.style.left = `${x}px`; el.style.top = `${y}px`; el.style.display = 'none';
+        const wordObj = { el: el, text: text, isDummy: isDummy, x: x, y: y, vx: 0, vy: 0 };
+        el.addEventListener('mousedown', (e) => startDrag(e, wordObj)); activeWords.push(wordObj); return wordObj;
+    }
+    function generateStage1() { ["BOY", "GIRL", "BOY", "GIRL", "BOY", "GIRL"].forEach((type, i) => { const w = createWord(type); w.el.style.display = 'block'; w.x = (container.clientWidth - 110) / 2; w.y = 160 + (i * 15); updatePos(w); }); }
+    function generateStage2() { for (let i = 0; i < 6; i++) { const w = createWord(i % 2 === 0 ? "BOY" : "GIRL"); w.el.style.display = 'block'; w.x = Math.random() * (container.clientWidth - 120); w.y = 100 + Math.random() * 150; w.vx = (Math.random() - 0.5) * 6; w.vy = (Math.random() - 0.5) * 6; updatePos(w); } }
+    function autoExplodeStage3() {
+        expBox.style.display = 'flex';
+        setTimeout(() => {
+            expBox.innerText = "POW!!"; expBox.className = "pow";
+            setTimeout(() => {
+                expBox.style.display = 'none';
+                setupExp(createWord("BOY", false)); setupExp(createWord("GIRL", false));
+                const dummys = ["DOG", "CAT", "BABY", "GOAT", "BIRD", "TOY", "JOY", "COOL", "KIDS", "SUN", "LOVE", "MOON", "STAR"];
+                for (let i = 0; i < 15; i++) { setupExp(createWord(dummys[i % dummys.length], true)); }
+                gameLoop();
+            }, 200);
+        }, 300);
+    }
+
+
+    function setupExp(w) { w.el.style.display = 'block'; w.x = container.clientWidth / 2 - 50; w.y = 320; const angle = Math.random() * Math.PI * 2; const speed = 3 + Math.random() * 6; w.vx = Math.cos(angle) * speed; w.vy = Math.sin(angle) * speed; updatePos(w); }
+    function resetMissedWord(w) { w.x = Math.random() * (container.clientWidth - 120); w.y = -50; w.vx = (Math.random() - 0.5) * 0.5; w.vy = 0; w.isReset = true; updatePos(w); }
+    function showGuessScreen() { overlay.style.display = 'flex'; infoContent.innerHTML = `<h2>すべての仕分けが完了！</h2><p>さあ、お腹の赤ちゃんの性別はどっちだと思う？</p><button id="guess-b" class="guess-btn" style="background:#4a90e2;">BOY 👦</button><button id="guess-g" class="guess-btn" style="background:#f5a623;">GIRL 👧</button>`; document.getElementById('guess-b').addEventListener('click', () => revealAnswer()); document.getElementById('guess-g').addEventListener('click', () => revealAnswer()); }
+    function revealAnswer() { infoContent.style.display = 'none'; const res = document.getElementById('result-screen'), ans = document.getElementById('reveal-answer'); res.style.display = 'block'; if (ACTUAL_GENDER === "BOY") { ans.innerText = "👦 BOY 👦"; container.style.background = "#e6f2ff"; ans.style.color = "#4a90e2"; } else { ans.innerText = "👧 GIRL 👧"; container.style.background = "#fff0f5"; ans.style.color = "#f5a623"; } }
+    function startDrag(e, w) { dragElement = w; const r = w.el.getBoundingClientRect(); offsetX = e.clientX - r.left; offsetY = e.clientY - r.top; w.vx = 0; w.vy = 0; document.addEventListener('mousemove', onDrag); document.addEventListener('mouseup', endDrag); }
+    function onDrag(e) { if (!dragElement) return; const cr = container.getBoundingClientRect(); dragElement.x = e.clientX - cr.left - offsetX; dragElement.y = e.clientY - cr.top - offsetY; updatePos(dragElement); }
+    function endDrag() { if (!dragElement) return; checkHit(dragElement); dragElement = null; document.removeEventListener('mousemove', onDrag); document.removeEventListener('mouseup', endDrag); }
+    function updatePos(w) { w.el.style.left = `${w.x}px`; w.el.style.top = `${w.y}px`; }
+    function checkHit(w) {
+        const r = w.el.getBoundingClientRect(), b = boyBox.getBoundingClientRect(), g = girlBox.getBoundingClientRect();
+        const cx = r.left + r.width / 2, cy = r.top + r.height / 2; let box = null;
+        if (cx > b.left && cx < b.right && cy > b.top && cy < b.bottom) box = "BOY"; else if (cx > g.left && cx < g.right && cy > g.top && cy < g.bottom) box = "GIRL";
+        if (box) { if (w.isDummy) { bounce(w); } else if (w.text === box) { w.el.remove(); activeWords = activeWords.filter(item => item !== w); checkClear(); } else { bounce(w); } }
+    }
+    function bounce(w) { w.x = (container.clientWidth - 110) / 2; w.y = 180; w.vx = (Math.random() - 0.5) * 4; w.vy = -4; updatePos(w); }
+    function checkClear() { if (activeWords.filter(item => !item.isDummy).length === 0) { if (currentStage === 1) showIntro("ステージ 1 クリア！", "次は動く文字をマウスで素早く捕まえてね！", "ステージ 2 へ"); else if (currentStage === 2) showIntro("ステージ 2 クリア！", "次が本番！クラッカー爆発から落ちてくるBOYとGIRLを1つずつ捕まえて！", "ステージ 3 へ"); else if (currentStage === 3) nextStage(); } }
+    function gameLoop() {
+        activeWords.forEach(w => {
+            if (w !== dragElement) {
+                w.x += w.vx; w.y += w.vy;
+                if (currentStage === 3) {
+                    w.vy += 0.12; w.vx *= 0.98;
+                    // 【修正】偽物（ダミー）も画面の下に落ちたら、消さずに上から再落下させる
+                    if (w.y > container.clientHeight) {
+                        resetMissedWord(w);
+                    }
+                    if (w.x < 0) { w.x = 0; w.vx *= -0.5; }
+                    const mw = container.clientWidth - w.el.clientWidth; if (w.x > mw) { w.x = mw; w.vx *= -0.5; }
+                } else {
+                    if (w.x < 0) { w.x = 0; w.vx *= -1; }
+                    const mw = container.clientWidth - w.el.clientWidth; if (w.x > mw) { w.x = mw; w.vx *= -1; }
+                    if (w.y < 60) { w.y = 60; w.vy *= -1; }
+                    const mh = container.clientHeight - 220; if (w.y > mh) { w.y = mh; w.vy *= -1; }
+                }
+                updatePos(w);
+            }
+        });
+        if (currentStage <= 3) animationFrameId = requestAnimationFrame(gameLoop);
+    }
+</script>
+</body>
+</html>
